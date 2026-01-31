@@ -5,10 +5,37 @@ from memory import save_fact, retrieve_facts
 import os
 from dotenv import load_dotenv
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.markdown import Markdown
+from rich.text import Text
+from rich.live import Live
+from rich.style import Style
+from rich.theme import Theme
+
 load_dotenv()
 URL = os.getenv("LMSTUDIO_URL", "http://localhost:1234")
 
 LM_STUDIO_URL = f"{URL}/v1/chat/completions"
+
+# Cyberpunk color scheme
+CYBER_THEME = Theme({
+    "cyan": "#00D9FF",
+    "magenta": "#FF10F0",
+    "neon_green": "#39FF14",
+    "dim_cyan": "dim #00D9FF",
+    "bright_white": "bright_white",
+})
+
+console = Console(theme=CYBER_THEME)
+
+# Styles
+STYLE_TOOL_CALL = Style(color="#00D9FF", bold=True)
+STYLE_TOOL_RESULT = Style(color="#FF10F0")
+STYLE_THINKING = Style(color="#00D9FF", dim=True)
+STYLE_SUCCESS = Style(color="#39FF14")
+STYLE_ERROR = Style(color="#FF10F0", bold=True)
+STYLE_PROMPT = Style(color="#00D9FF", bold=True)
 
 SYSTEM_PROMPT = """You're a helpful assistant with persistent memory across conversations.
 
@@ -34,7 +61,7 @@ Keep responses natural:
 
 Tone guidelines:
 - Keep responses concise and natural
-- Don't use emojis in conversational responses 
+- Don't use emojis in conversational responses
 - Don't make assumptions or offer unsolicited advice
 - Avoid corporate-assistant phrases like "How can I assist you today?"
 - Just respond naturally to what the user actually asks"""
@@ -75,7 +102,22 @@ RETRIEVE_FACTS_TOOL = {
     }
 }
 
-def call_llm(messages, tools=None, stream=False):
+
+class StreamingResponse:
+    """Handles streaming response display with rich Live"""
+
+    def __init__(self):
+        self.content = ""
+        self.tool_calls_accumulated = []
+
+    def update(self, new_content: str):
+        self.content += new_content
+
+    def get_display(self) -> Markdown:
+        return Markdown(self.content) if self.content else Text("")
+
+
+def call_llm(messages, tools=None, stream=False, live_display=None):
     """Call LM Studio API, optionally with streaming"""
     payload = {
         "messages": messages,
@@ -120,11 +162,12 @@ def call_llm(messages, tools=None, stream=False):
 
             delta = chunk["choices"][0].get("delta", {})
 
-            # Stream content tokens to stdout
+            # Stream content tokens
             content = delta.get("content")
             if content:
-                print(content, end='', flush=True)
                 full_content += content
+                if live_display:
+                    live_display.update(Markdown(full_content))
 
             # Accumulate tool calls (they come in pieces)
             if "tool_calls" in delta:
@@ -153,8 +196,9 @@ def call_llm(messages, tools=None, stream=False):
         return {"choices": [{"message": message}]}
 
     except requests.exceptions.RequestException as e:
-        print(f"Error calling LLM: {e}")
+        console.print(f"[bold magenta]Error calling LLM:[/bold magenta] {e}")
         return None
+
 
 def execute_tool(func_name, args):
     """Execute a tool call and return the result"""
@@ -184,18 +228,96 @@ def execute_tool(func_name, args):
 
     return f"Unknown tool: {func_name}"
 
+
+def display_tool_call(func_name: str, args: dict):
+    """Display a tool call in a cyan panel"""
+    if args:
+        args_display = ", ".join(f'{k}="{v}"' for k, v in args.items() if v)
+        if args_display:
+            call_text = f"{func_name}({args_display})"
+        else:
+            call_text = f"{func_name}()"
+    else:
+        call_text = f"{func_name}()"
+
+    panel = Panel(
+        Text(call_text, style=STYLE_TOOL_CALL),
+        title="[bold #00D9FF]TOOL CALL[/bold #00D9FF]",
+        title_align="left",
+        border_style="#00D9FF",
+        padding=(0, 1),
+    )
+    console.print(panel)
+
+
+def display_tool_result(result: str):
+    """Display a tool result in a magenta panel"""
+    result_preview = result[:200] + "..." if len(result) > 200 else result
+
+    panel = Panel(
+        Text(result_preview, style=STYLE_TOOL_RESULT),
+        title="[bold #FF10F0]RESULT[/bold #FF10F0]",
+        title_align="left",
+        border_style="#FF10F0",
+        padding=(0, 1),
+    )
+    console.print(panel)
+
+
+def display_thinking():
+    """Display thinking indicator"""
+    text = Text("processing...", style=STYLE_THINKING)
+    console.print(text)
+
+
+def display_welcome():
+    """Display welcome message with cyberpunk styling"""
+    title = Text()
+    title.append("LOCAL MEMORY ASSISTANT", style="bold #00D9FF")
+
+    subtitle = Text()
+    subtitle.append("Type ", style="dim white")
+    subtitle.append("quit", style="#FF10F0")
+    subtitle.append(" to exit", style="dim white")
+
+    panel = Panel(
+        Text.assemble(title, "\n", subtitle),
+        border_style="#00D9FF",
+        padding=(0, 2),
+    )
+    console.print(panel)
+    console.print()
+
+
+def get_user_input() -> str:
+    """Get user input with styled prompt"""
+    console.print()
+    prompt = Text()
+    prompt.append("> ", style="bold #00D9FF")
+    console.print(prompt, end="")
+    return input().strip()
+
+
+def display_response(content: str):
+    """Display assistant response as rendered markdown"""
+    if content:
+        console.print()
+        console.print(Markdown(content))
+
+
 def main():
-    print("Local Memory Assistant - Type 'quit' to exit\n")
+    display_welcome()
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-
     tools = [STORE_FACT_TOOL, RETRIEVE_FACTS_TOOL]
 
     while True:
-        user_input = input("\nYou: ").strip()
+        user_input = get_user_input()
 
         if user_input.lower() in ['quit', 'exit']:
-            print("Goodbye!")
+            console.print()
+            goodbye = Text("Goodbye!", style="bold #FF10F0")
+            console.print(goodbye)
             break
 
         if not user_input:
@@ -209,16 +331,18 @@ def main():
             iteration += 1
 
             # Only stream on the first iteration (to show thinking in real-time)
-            # For tool iterations, use non-streaming to avoid confusion
             use_streaming = (iteration == 1)
 
             if iteration == 1:
-                print("\nAssistant: ", end='', flush=True)
-
-            response = call_llm(messages, tools=tools, stream=use_streaming)
+                console.print()
+                # Use Live for streaming response
+                with Live(Markdown(""), console=console, refresh_per_second=15, transient=False) as live:
+                    response = call_llm(messages, tools=tools, stream=use_streaming, live_display=live)
+            else:
+                response = call_llm(messages, tools=tools, stream=False)
 
             if not response:
-                print("\nFailed to get response from LLM")
+                console.print("[bold #FF10F0]Failed to get response from LLM[/bold #FF10F0]")
                 break
 
             message = response["choices"][0]["message"]
@@ -226,10 +350,6 @@ def main():
 
             # If there are tool calls, execute them and loop
             if tool_calls_raw:
-                # Add newline if this is first iteration (after streaming)
-                if iteration == 1 and message.get("content"):
-                    print()
-
                 # Add assistant message with tool calls to history
                 messages.append({
                     "role": "assistant",
@@ -249,22 +369,13 @@ def main():
                     except json.JSONDecodeError:
                         args = {}
 
-                    # Log tool call
-                    if args:
-                        args_display = ", ".join(f"{k}=\"{v}\"" for k, v in args.items() if v)
-                        if args_display:
-                            print(f"\n[🔧 Tool Call] {func_name}({args_display})")
-                        else:
-                            print(f"\n[🔧 Tool Call] {func_name}()")
-                    else:
-                        print(f"\n[🔧 Tool Call] {func_name}()")
+                    console.print()
+                    display_tool_call(func_name, args)
 
                     # Execute tool
                     result = execute_tool(func_name, args)
 
-                    # Log result
-                    result_preview = result[:100] + "..." if len(result) > 100 else result
-                    print(f"[📋 Tool Result] {result_preview}")
+                    display_tool_result(result)
 
                     # Add tool result to messages
                     messages.append({
@@ -275,20 +386,18 @@ def main():
                     })
 
                 # Model will think again with the tool results
-                print("\n[🤔 Thinking...]")
+                console.print()
+                display_thinking()
 
             else:
                 # No tool calls - this is the final response
                 if iteration > 1:
                     # Stream the final response
-                    print("\n[💬 Response] ", end='', flush=True)
-                    response = call_llm(messages, tools=tools, stream=True)
+                    console.print()
+                    with Live(Markdown(""), console=console, refresh_per_second=15, transient=False) as live:
+                        response = call_llm(messages, tools=tools, stream=True, live_display=live)
                     if response:
                         message = response["choices"][0]["message"]
-                    print()
-                else:
-                    # Already streamed in iteration 1
-                    print()
 
                 # Add final assistant response to message history
                 assistant_text = message.get("content", "")
@@ -296,6 +405,7 @@ def main():
                     messages.append({"role": "assistant", "content": assistant_text})
 
                 break  # Exit agentic loop
+
 
 if __name__ == "__main__":
     main()
