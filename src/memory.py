@@ -24,3 +24,26 @@ def save_fact(fact):
             json.dump(facts, f, indent=2)
         return True
     return False
+
+def retrieve_facts(query=None):
+    """Retrieve facts, optionally filtered by query"""
+    facts = load_facts()
+
+    # Return all facts if no query or empty string
+    if not query or query.strip() == "":
+        return facts
+
+    # Case-insensitive substring search with partial word matching
+    query_lower = query.lower().strip()
+
+    # Split query into words for more flexible matching
+    query_words = query_lower.split()
+
+    matching_facts = []
+    for fact in facts:
+        fact_lower = fact.lower()
+        # Match if the full query is in the fact OR if any query word matches
+        if query_lower in fact_lower or any(word in fact_lower for word in query_words):
+            matching_facts.append(fact)
+
+    return matching_facts
