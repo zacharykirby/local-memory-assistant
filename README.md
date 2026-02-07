@@ -5,16 +5,16 @@ A lightweight assistant that runs entirely locally and remembers things about yo
 ## What it does
 
 - Chats using local LLMs (via LM Studio or any OpenAI-like endpoint)
-- Stores facts about you that persist between sessions
+- **Stores all memory in your Obsidian vault** - facts, notes, and structured information
 - **Searches your Obsidian vault** for notes with intelligent filtering
-- **Maintains structured AI memory notes** in your Obsidian vault
+- **Maintains structured AI memory notes** in dedicated `AI Memory/` folder
 - Loads previous context automatically when you restart
 
 ## Why this exists
 
 Most local LLM setups forget everything when you close them. This one doesn't.
 
-Currently stores everything in a simple JSON file and integrates with Obsidian for knowledge retrieval.
+Everything is stored in your Obsidian vault, so you can view, edit, and organize the AI's memory using Obsidian.
 
 ## Requirements
 
@@ -33,9 +33,10 @@ Currently stores everything in a simple JSON file and integrates with Obsidian f
 ## Features
 
 ### Basic Memory Storage
-- Persistently stores facts about you in JSON format
+- Stores simple facts in `AI Memory/facts.md` (markdown format)
 - Automatically retrieves relevant context for conversations
 - Avoids duplicate information
+- Facts are stored as bullet points with automatic timestamps
 
 ### AI Memory Notes (NEW!)
 - Creates structured notes in `AI Memory/` folder in your Obsidian vault
