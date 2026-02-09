@@ -2044,16 +2044,15 @@ def main():
 
             else:
                 # No tool calls - this is the final response
-                if iteration > 1:
-                    # Stream the final response
+                content = message.get("content", "")
+
+                if iteration > 1 and content:
+                    # Display the response we already received (don't re-call LLM)
                     console.print()
-                    with Live(Markdown(""), console=console, refresh_per_second=15, transient=False) as live:
-                        response = call_llm(messages, tools=tools, stream=True, live_display=live)
-                    if response:
-                        message = response["choices"][0]["message"]
+                    console.print(content)
 
                 # Add final assistant response to message history
-                assistant_text = message.get("content", "")
+                assistant_text = content
                 if assistant_text:
                     messages.append({"role": "assistant", "content": assistant_text})
 
