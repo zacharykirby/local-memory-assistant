@@ -852,12 +852,12 @@ class StreamingResponse:
         return Markdown(self.content) if self.content else Text("")
 
 
-def call_llm(messages, tools=None, stream=False, live_display=None):
+def call_llm(messages, tools=None, stream=False, live_display=None, max_tokens=500):
     """Call LM Studio API, optionally with streaming"""
     payload = {
         "messages": messages,
         "temperature": 0.7,
-        "max_tokens": 500,
+        "max_tokens": max_tokens,
         "stream": stream
     }
 
@@ -1440,28 +1440,91 @@ def _template_fallback_memory(answers: dict) -> dict:
 
 
 def _extract_json_from_response(content: str) -> Optional[dict]:
-    """Try to extract a JSON object from LLM response (handle markdown code blocks)."""
+    """Try to extract a JSON object from LLM response (handle markdown code blocks and truncation)."""
     content = (content or "").strip()
-    # Try raw parse first
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        pass
-    # Try to find ```json ... ``` block
+    if not content:
+        return None
+
+    def try_parse(s: str) -> Optional[dict]:
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError:
+            return None
+
+    # Strip markdown code fence (optional language tag)
+    for pattern in (r"^```(?:json)?\s*\n?", r"\n?```\s*$"):
+        content = re.sub(pattern, "", content)
+    content = content.strip()
+
+    parsed = try_parse(content)
+    if parsed:
+        return parsed
+
+    # Try to find ```json ... ``` or ``` ... ``` block (non-greedy to first closing)
     match = re.search(r"```(?:json)?\s*([\s\S]*?)```", content)
     if match:
-        try:
-            return json.loads(match.group(1).strip())
-        except json.JSONDecodeError:
-            pass
-    # Try to find first { ... } object
-    match = re.search(r"\{[\s\S]*\}", content)
+        parsed = try_parse(match.group(1).strip())
+        if parsed:
+            return parsed
+
+    # Try first { ... } (may be truncated)
+    match = re.search(r"\{[\s\S]*", content)
     if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            pass
+        candidate = match.group(0)
+        parsed = try_parse(candidate)
+        if parsed:
+            return parsed
+        # Repair truncated JSON: close open strings and brackets
+        repaired = _repair_truncated_json(candidate)
+        if repaired:
+            parsed = try_parse(repaired)
+            if parsed:
+                return parsed
+
     return None
+
+
+def _repair_truncated_json(s: str) -> Optional[str]:
+    """Attempt to close truncated JSON by balancing brackets (and close open string if needed)."""
+    if not s or not s.strip().startswith("{"):
+        return None
+    in_double = False
+    escape = False
+    stack = []
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if escape:
+            escape = False
+            i += 1
+            continue
+        if in_double:
+            if c == "\\":
+                escape = True
+            elif c == '"':
+                in_double = False
+            i += 1
+            continue
+        if c == '"':
+            in_double = True
+            i += 1
+            continue
+        if c == "{":
+            stack.append("}")
+            i += 1
+            continue
+        if c == "[":
+            stack.append("]")
+            i += 1
+            continue
+        if c in "}]" and stack and stack[-1] == c:
+            stack.pop()
+        i += 1
+    suffix = ""
+    if in_double:
+        suffix += '"'
+    suffix += "".join(reversed(stack))
+    return s + suffix if suffix else None
 
 
 def generate_initial_memory(answers: dict) -> dict:
@@ -1723,8 +1786,9 @@ def extract_memory_from_conversation(conversation: list) -> Optional[dict]:
         {"role": "system", "content": "You output only valid JSON. No markdown code blocks, no explanation."},
         {"role": "user", "content": prompt},
     ]
+    # Extraction output can be large (core + many context/timeline files); need enough tokens
     for attempt in range(2):
-        response = call_llm(messages, tools=None, stream=False)
+        response = call_llm(messages, tools=None, stream=False, max_tokens=8192)
         if not response:
             continue
         raw = (response.get("choices") or [{}])[0].get("message", {}).get("content") or ""
