@@ -384,3 +384,63 @@ def test_consolidation_is_agentic(vault_path):
     assert len(tool_messages) == 1, "Exactly one tool result should be in history"
     assert tool_messages[0].get("tool_call_id") == "call_0"
     assert "Core" in tool_messages[0].get("content", "") or "empty" in tool_messages[0].get("content", "").lower()
+
+
+# --- truncate_messages (context window management) ---
+
+
+def test_truncate_messages():
+    """Test message truncation preserves system and keeps recent messages."""
+    from chat import truncate_messages
+
+    # Build test conversation: system + 60 conversation messages (30 turns)
+    messages = [
+        {"role": "system", "content": "System prompt"},
+        {"role": "user", "content": "Message 1"},
+        {"role": "assistant", "content": "Response 1"},
+        {"role": "user", "content": "Message 2"},
+        {"role": "assistant", "content": "Response 2"},
+    ]
+    for i in range(3, 33):
+        messages.append({"role": "user", "content": f"Message {i}"})
+        messages.append({"role": "assistant", "content": f"Response {i}"})
+
+    # Truncate to 20 messages
+    result = truncate_messages(messages, max_messages=20)
+
+    # Verify system message preserved
+    assert result[0]["role"] == "system"
+    assert result[0]["content"] == "System prompt"
+
+    # Verify only 20 conversation messages kept
+    conversation = [m for m in result if m["role"] != "system"]
+    assert len(conversation) == 20
+
+    # Verify most recent messages kept
+    assert conversation[-1]["content"] == "Response 32"
+    assert conversation[-2]["content"] == "Message 32"
+
+    # Verify oldest messages dropped
+    assert not any(m.get("content") == "Message 1" for m in result)
+    assert not any(m.get("content") == "Response 1" for m in result)
+
+
+def test_truncate_messages_no_truncation_needed():
+    """When under limit, messages are returned unchanged."""
+    from chat import truncate_messages
+
+    messages = [
+        {"role": "system", "content": "System"},
+        {"role": "user", "content": "Hi"},
+        {"role": "assistant", "content": "Hello"},
+    ]
+    result = truncate_messages(messages, max_messages=50)
+    assert result == messages
+
+
+def test_truncate_messages_empty():
+    """Empty list returns empty list."""
+    from chat import truncate_messages
+
+    assert truncate_messages([]) == []
+    assert truncate_messages([], max_messages=10) == []

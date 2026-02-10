@@ -73,6 +73,45 @@ STYLE_SUCCESS = Style(color="#39FF14")
 STYLE_ERROR = Style(color="#FF10F0", bold=True)
 STYLE_PROMPT = Style(color="#00D9FF", bold=True)
 
+# Context window management
+MAX_MESSAGES_IN_CONTEXT = 50  # Maximum conversation messages (tune based on usage)
+CONSOLIDATION_MAX_MESSAGES = 60  # Slightly higher for consolidation context
+SYSTEM_MESSAGE_ROLES = {"system"}  # Roles that shouldn't be truncated
+
+
+def truncate_messages(messages: list, max_messages: int = MAX_MESSAGES_IN_CONTEXT) -> list:
+    """
+    Truncate conversation to most recent messages while preserving system messages.
+
+    Args:
+        messages: Full message history
+        max_messages: Maximum conversation messages to keep (excludes system messages)
+
+    Returns:
+        Truncated message list with system messages + recent conversation
+    """
+    if not messages:
+        return messages
+
+    # Separate system messages from conversation
+    system_msgs = [m for m in messages if m.get("role") in SYSTEM_MESSAGE_ROLES]
+    conversation_msgs = [m for m in messages if m.get("role") not in SYSTEM_MESSAGE_ROLES]
+
+    # Check if truncation needed
+    if len(conversation_msgs) <= max_messages:
+        return messages  # No truncation needed
+
+    # Keep most recent conversation messages
+    kept_conversation = conversation_msgs[-max_messages:]
+
+    # Log truncation for debugging
+    dropped_count = len(conversation_msgs) - max_messages
+    console.print(f"[dim]Truncated {dropped_count} old messages to stay within context limit[/dim]")
+
+    # Reconstruct: system messages + recent conversation
+    return system_msgs + kept_conversation
+
+
 SYSTEM_PROMPT = """You're a helpful assistant with persistent memory across conversations.
 
 You have a hierarchical memory system (always in your Obsidian vault):
@@ -1717,6 +1756,7 @@ def run_agent_loop(
     max_iterations: int = 10,
     stream_first_response: bool = True,
     show_tool_calls: bool = True,
+    max_messages_in_context: int = MAX_MESSAGES_IN_CONTEXT,
 ):
     """
     Run the agentic loop: LLM → tools → LLM → tools → ... → final response.
@@ -1728,6 +1768,7 @@ def run_agent_loop(
         max_iterations: Maximum number of iterations before forcing stop
         stream_first_response: Whether to stream the first LLM response
         show_tool_calls: Whether to display tool execution in UI
+        max_messages_in_context: Maximum conversation messages to keep (excludes system)
 
     Returns:
         dict with "messages", "final_response", "iterations"
@@ -1739,6 +1780,10 @@ def run_agent_loop(
 
     while not done and iteration < max_iterations:
         iteration += 1
+
+        # Truncate before each LLM call to stay within context window
+        messages = truncate_messages(messages, max_messages=max_messages_in_context)
+
         should_stream = stream_first_response and (iteration == 1)
 
         if should_stream:
@@ -1976,6 +2021,7 @@ Conversation context (recent messages):
         max_iterations=10,
         stream_first_response=False,
         show_tool_calls=True,
+        max_messages_in_context=CONSOLIDATION_MAX_MESSAGES,
     )
 
     if result["iterations"] >= 10:
