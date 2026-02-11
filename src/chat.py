@@ -70,6 +70,20 @@ def _confirm_reset() -> bool:
         return False
 
 
+def _build_system_content(core_section: str) -> str:
+    """Build system message content with current core memory."""
+    if core_section:
+        return SYSTEM_PROMPT + "\n\n## Core memory (current)\n\n" + core_section
+    return SYSTEM_PROMPT + "\n\n## Core memory (current)\n\n(Empty. Use update_core_memory when you learn something about the user.)"
+
+
+def _refresh_system_message(messages: list) -> str:
+    """Re-read core memory from disk and update the system message in place. Returns the new core section."""
+    core_section = read_core_memory()
+    messages[0] = {"role": "system", "content": _build_system_content(core_section)}
+    return core_section
+
+
 def _run_agent_loop(initial_messages, tools, max_messages_in_context=MAX_MESSAGES_IN_CONTEXT, **kwargs):
     """Wrapper that passes truncate_messages to run_agent_loop."""
     return run_agent_loop(
@@ -128,12 +142,7 @@ def main():
         console.print(f"[bold #FF10F0]Memory init warning: {init_result.get('error', 'Unknown')}[/bold #FF10F0]")
 
     core_section = read_core_memory()
-    if core_section:
-        system_content = SYSTEM_PROMPT + "\n\n## Core memory (current)\n\n" + core_section
-    else:
-        system_content = SYSTEM_PROMPT + "\n\n## Core memory (current)\n\n(Empty. Use update_core_memory when you learn something about the user.)"
-
-    messages = [{"role": "system", "content": system_content}]
+    messages = [{"role": "system", "content": _build_system_content(core_section)}]
 
     while True:
         user_input = get_user_input()
@@ -169,6 +178,9 @@ def main():
             show_tool_calls=True,
         )
         messages = result["messages"]
+
+        # Refresh system message so core memory stays current after tool updates
+        core_section = _refresh_system_message(messages)
 
 
 if __name__ == "__main__":

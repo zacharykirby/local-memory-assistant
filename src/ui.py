@@ -92,12 +92,16 @@ def display_welcome():
 
 
 def get_user_input() -> str:
-    """Get user input with styled prompt."""
+    """Get user input with styled prompt. Returns 'quit' on Ctrl+C/Ctrl+D."""
     console.print()
     prompt = Text()
     prompt.append("> ", style="bold #00D9FF")
     console.print(prompt, end="")
-    return input().strip()
+    try:
+        return input().strip()
+    except (KeyboardInterrupt, EOFError):
+        console.print()
+        return "quit"
 
 
 def display_response(content: str):

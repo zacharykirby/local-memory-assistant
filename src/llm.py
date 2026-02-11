@@ -22,6 +22,9 @@ MAX_MESSAGES_IN_CONTEXT = 50
 CONSOLIDATION_MAX_MESSAGES = 60
 SYSTEM_MESSAGE_ROLES = {"system"}
 
+# Request timeout: (connect_timeout, read_timeout) in seconds
+REQUEST_TIMEOUT = (5, 120)
+
 
 def truncate_messages(messages: list, max_messages: int = MAX_MESSAGES_IN_CONTEXT) -> list:
     """Truncate conversation to most recent messages while preserving system messages.
@@ -90,12 +93,12 @@ def call_llm(messages, tools=None, stream=False, live_display=None, max_tokens=5
 
     try:
         if not stream:
-            response = requests.post(LM_STUDIO_URL, json=payload)
+            response = requests.post(LM_STUDIO_URL, json=payload, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.json()
 
         # Streaming mode
-        response = requests.post(LM_STUDIO_URL, json=payload, stream=True)
+        response = requests.post(LM_STUDIO_URL, json=payload, stream=True, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
         full_content = ""
