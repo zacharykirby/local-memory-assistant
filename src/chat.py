@@ -135,13 +135,13 @@ def main():
     if not memory_exists():
         run_memory_initialization()
 
-    display_welcome()
+    core_section = read_core_memory()
+    display_welcome(core_memory=core_section)
 
     init_result = ensure_memory_structure()
     if not init_result.get("success"):
         console.print(f"[bold #FF10F0]Memory init warning: {init_result.get('error', 'Unknown')}[/bold #FF10F0]")
 
-    core_section = read_core_memory()
     messages = [{"role": "system", "content": _build_system_content(core_section)}]
 
     while True:

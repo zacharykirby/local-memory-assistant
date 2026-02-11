@@ -72,8 +72,8 @@ def display_thinking():
     console.print(text)
 
 
-def display_welcome():
-    """Display welcome message with cyberpunk styling."""
+def display_welcome(core_memory: str = ""):
+    """Display welcome message with cyberpunk styling. If core_memory is provided, show it in the initial interaction."""
     title = Text()
     title.append("LOCAL MEMORY ASSISTANT", style="bold #00D9FF")
 
@@ -82,8 +82,15 @@ def display_welcome():
     subtitle.append("quit", style="#FF10F0")
     subtitle.append(" to exit", style="dim white")
 
+    body = Text.assemble(title, "\n", subtitle)
+    if core_memory and core_memory.strip():
+        body.append("\n\n", style="dim")
+        body.append("Core memory (in context):", style="bold #00D9FF")
+        body.append("\n", style="dim")
+        body.append(core_memory.strip(), style="dim white")
+
     panel = Panel(
-        Text.assemble(title, "\n", subtitle),
+        body,
         border_style="#00D9FF",
         padding=(0, 2),
     )
