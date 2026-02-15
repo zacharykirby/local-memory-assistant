@@ -688,12 +688,11 @@ def test_update_soul_in_chat_tools():
 # --- soul directory: new tests ---
 
 
-def test_update_soul_observations(execute_tool, vault_path):
-    """update_soul can target observations.md."""
+def test_update_soul_observations_blocked(execute_tool, vault_path):
+    """update_soul with file='observations' is redirected to update_observations."""
     out = execute_tool("update_soul", {"file": "observations", "content": "# Observations\n\nUser seems curious."})
-    assert "updated" in out.lower()
-    obs_path = vault_path / "AI Memory" / "soul" / "observations.md"
-    assert "User seems curious" in obs_path.read_text(encoding="utf-8")
+    assert "Error" in out
+    assert "update_observations" in out
 
 
 def test_update_soul_invalid_file(execute_tool, vault_path):
@@ -766,3 +765,395 @@ def test_legacy_soul_migration(tmp_path, monkeypatch):
     assert (mem_dir / "soul" / "observations.md").exists()
     assert (mem_dir / "soul" / "opinions.md").exists()
     assert (mem_dir / "soul" / "unresolved.md").exists()
+
+
+# --- observations: append-only log ---
+
+
+def test_update_observations_first_entry(execute_tool, vault_path):
+    """First observation replaces default content and creates a timestamped entry."""
+    out = execute_tool("update_observations", {"observation": "User seems curious about systems."})
+    assert "logged" in out.lower()
+    assert "1 entries" in out
+
+    obs_path = vault_path / "AI Memory" / "soul" / "observations.md"
+    content = obs_path.read_text(encoding="utf-8")
+    assert "# Observations" in content
+    assert "User seems curious about systems." in content
+    assert "---" in content
+    # Should have a timestamp
+    import re
+    assert re.search(r'\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]', content)
+
+
+def test_update_observations_appends(execute_tool, vault_path):
+    """Subsequent observations append without overwriting."""
+    execute_tool("update_observations", {"observation": "First pattern noticed."})
+    execute_tool("update_observations", {"observation": "Second pattern noticed."})
+
+    obs_path = vault_path / "AI Memory" / "soul" / "observations.md"
+    content = obs_path.read_text(encoding="utf-8")
+    assert "First pattern noticed." in content
+    assert "Second pattern noticed." in content
+    out = execute_tool("update_observations", {"observation": "Third."})
+    assert "3 entries" in out
+    content = obs_path.read_text(encoding="utf-8")
+    assert "First pattern noticed." in content
+    assert "Third." in content
+
+
+def test_update_observations_rejects_full_rewrite(execute_tool, vault_path):
+    """Passing a full file rewrite (starting with #) is rejected."""
+    out = execute_tool("update_observations", {
+        "observation": "# Observations\n\nRewritten content."
+    })
+    assert "Error" in out
+    assert "rewrite" in out.lower()
+
+
+def test_update_observations_rejects_multiple_entries(execute_tool, vault_path):
+    """Passing multiple entries in one call is rejected."""
+    out = execute_tool("update_observations", {
+        "observation": "First.\n---\n[2026-01-01 12:00]\nSecond."
+    })
+    assert "Error" in out
+    assert "single" in out.lower()
+
+
+def test_update_observations_empty_rejected(execute_tool, vault_path):
+    """Empty observation is rejected."""
+    out = execute_tool("update_observations", {"observation": ""})
+    assert "Error" in out
+
+
+def test_update_observations_legacy_migration(vault_path):
+    """Legacy free-form observations content gets wrapped as a summary block."""
+    from memory import update_observations
+
+    obs_path = vault_path / "AI Memory" / "soul" / "observations.md"
+    obs_path.write_text(
+        "# Observations\n\nUser is curious and asks good questions.\nThey work late often.\n",
+        encoding="utf-8",
+    )
+
+    result = update_observations("New pattern noticed.")
+    assert result.get("success")
+
+    content = obs_path.read_text(encoding="utf-8")
+    assert "## Summarized observations (through" in content
+    assert "User is curious" in content
+    assert "New pattern noticed." in content
+
+
+# --- resolve_observation ---
+
+
+def test_resolve_observation_by_text(execute_tool, vault_path):
+    """Resolve an observation by matching partial text."""
+    execute_tool("update_observations", {"observation": "They seem stressed about deadlines."})
+    out = execute_tool("resolve_observation", {
+        "identifier": "stressed about deadlines",
+        "reason": "They confirmed deadlines are manageable now",
+    })
+    assert "resolved" in out.lower()
+
+    obs_path = vault_path / "AI Memory" / "soul" / "observations.md"
+    content = obs_path.read_text(encoding="utf-8")
+    assert "[resolved: They confirmed deadlines are manageable now]" in content
+
+
+def test_resolve_observation_by_timestamp(execute_tool, vault_path):
+    """Resolve an observation by matching timestamp."""
+    execute_tool("update_observations", {"observation": "Pattern A."})
+
+    obs_path = vault_path / "AI Memory" / "soul" / "observations.md"
+    content = obs_path.read_text(encoding="utf-8")
+    import re
+    ts_match = re.search(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]', content)
+    assert ts_match
+    timestamp = ts_match.group(1)
+
+    out = execute_tool("resolve_observation", {
+        "identifier": timestamp,
+        "reason": "No longer relevant",
+    })
+    assert "resolved" in out.lower()
+
+
+def test_resolve_observation_not_found(execute_tool, vault_path):
+    """Resolving a non-existent observation returns an error."""
+    execute_tool("update_observations", {"observation": "Some observation."})
+    out = execute_tool("resolve_observation", {
+        "identifier": "nonexistent text",
+        "reason": "test",
+    })
+    assert "Error" in out
+    assert "No unresolved" in out
+
+
+def test_resolve_observation_already_resolved(execute_tool, vault_path):
+    """Cannot resolve an already-resolved observation."""
+    execute_tool("update_observations", {"observation": "Observation to resolve twice."})
+    execute_tool("resolve_observation", {
+        "identifier": "resolve twice",
+        "reason": "First resolve",
+    })
+    out = execute_tool("resolve_observation", {
+        "identifier": "resolve twice",
+        "reason": "Second resolve",
+    })
+    assert "Error" in out
+
+
+def test_resolve_observation_missing_args(execute_tool, vault_path):
+    """Missing identifier or reason returns error."""
+    out = execute_tool("resolve_observation", {"identifier": "", "reason": "test"})
+    assert "Error" in out
+    out = execute_tool("resolve_observation", {"identifier": "test", "reason": ""})
+    assert "Error" in out
+
+
+# --- read_observations_for_context ---
+
+
+def test_read_observations_for_context_filters_resolved(vault_path):
+    """Resolved entries are excluded from context loading."""
+    from memory import update_observations, resolve_observation, read_observations_for_context
+
+    update_observations("Active observation.")
+    update_observations("Resolved observation.")
+    resolve_observation("Resolved observation", "No longer relevant")
+
+    context = read_observations_for_context()
+    assert "Active observation." in context
+    assert "Resolved observation." not in context
+
+
+def test_read_observations_for_context_includes_summary(vault_path):
+    """Summary block is included in context loading."""
+    from memory import read_observations_for_context
+
+    obs_path = vault_path / "AI Memory" / "soul" / "observations.md"
+    obs_path.write_text(
+        "# Observations\n\n"
+        "## Summarized observations (through 2026-02-01)\n"
+        "User likes concise code.\n\n"
+        "---\n[2026-02-15 10:00]\nRecent observation.\n",
+        encoding="utf-8",
+    )
+
+    context = read_observations_for_context()
+    assert "## Summarized observations (through 2026-02-01)" in context
+    assert "User likes concise code." in context
+    assert "Recent observation." in context
+
+
+def test_read_observations_for_context_default_content(vault_path):
+    """Default observations content is returned as-is."""
+    from memory import read_observations_for_context, DEFAULT_OBSERVATIONS_CONTENT
+
+    context = read_observations_for_context()
+    assert context.strip() == DEFAULT_OBSERVATIONS_CONTENT.strip()
+
+
+# --- check_observations_need_consolidation ---
+
+
+def test_observations_consolidation_not_needed(vault_path):
+    """Below threshold: consolidation not needed."""
+    from memory import update_observations, check_observations_need_consolidation
+
+    update_observations("Just one observation.")
+    assert not check_observations_need_consolidation()
+
+
+def test_observations_consolidation_needed_by_count(vault_path):
+    """Over entry count threshold triggers consolidation."""
+    from memory import update_observations, check_observations_need_consolidation, OBSERVATIONS_MAX_ENTRIES
+
+    for i in range(OBSERVATIONS_MAX_ENTRIES + 1):
+        update_observations(f"Observation {i}.")
+
+    assert check_observations_need_consolidation()
+
+
+def test_observations_consolidation_needed_by_tokens(vault_path):
+    """Over token threshold triggers consolidation."""
+    from memory import update_observations, check_observations_need_consolidation
+
+    # Write entries that exceed 800 tokens (~3200 chars)
+    for i in range(10):
+        update_observations("x" * 350 + f" observation {i}")
+
+    assert check_observations_need_consolidation()
+
+
+# --- prepare_observations_for_consolidation ---
+
+
+def test_prepare_observations_splits_correctly(vault_path):
+    """Preparation splits old vs recent entries correctly."""
+    from memory import update_observations, prepare_observations_for_consolidation, OBSERVATIONS_KEEP_RECENT
+
+    for i in range(OBSERVATIONS_KEEP_RECENT + 5):
+        update_observations(f"Observation {i}.")
+
+    prep = prepare_observations_for_consolidation()
+    assert prep is not None
+    assert len(prep['recent_entries']) == OBSERVATIONS_KEEP_RECENT
+    assert "Observation 0." in prep['old_entries_text']
+    assert "Observation 4." in prep['old_entries_text']
+    assert prep['full_content']  # Full content for archiving
+
+
+def test_prepare_observations_returns_none_below_threshold(vault_path):
+    """Returns None when entry count is at or below KEEP_RECENT."""
+    from memory import update_observations, prepare_observations_for_consolidation
+
+    update_observations("Just one.")
+    assert prepare_observations_for_consolidation() is None
+
+
+# --- write_consolidated_observations ---
+
+
+def test_write_consolidated_observations(vault_path):
+    """Consolidated write archives old content and rewrites the file."""
+    from memory import (
+        update_observations, prepare_observations_for_consolidation,
+        write_consolidated_observations, OBSERVATIONS_KEEP_RECENT,
+        OBSERVATIONS_ARCHIVE_FILE, _parse_observation_entries,
+    )
+
+    for i in range(OBSERVATIONS_KEEP_RECENT + 5):
+        update_observations(f"Observation {i}.")
+
+    prep = prepare_observations_for_consolidation()
+    assert prep is not None
+
+    result = write_consolidated_observations(
+        "User is curious and detail-oriented.",
+        prep['recent_entries'],
+        prep['full_content'],
+    )
+    assert result.get("success")
+
+    # Check observations.md has summary + recent entries
+    obs_path = vault_path / "AI Memory" / "soul" / "observations.md"
+    content = obs_path.read_text(encoding="utf-8")
+    assert "## Summarized observations (through" in content
+    assert "User is curious and detail-oriented." in content
+
+    parsed = _parse_observation_entries(content)
+    assert len(parsed['entries']) == OBSERVATIONS_KEEP_RECENT
+
+    # Check archive was created
+    archive_path = vault_path / "AI Memory" / "soul" / OBSERVATIONS_ARCHIVE_FILE
+    assert archive_path.exists()
+    archive_content = archive_path.read_text(encoding="utf-8")
+    assert "# Observations Archive" in archive_content
+    assert "## Session:" in archive_content
+    assert "Observation 0." in archive_content
+
+
+# --- update_soul blocked for observations ---
+
+
+def test_update_soul_blocks_observations(execute_tool, vault_path):
+    """update_soul with file='observations' is rejected, redirecting to update_observations."""
+    out = execute_tool("update_soul", {"file": "observations", "content": "Rewrite attempt."})
+    assert "Error" in out
+    assert "update_observations" in out
+
+
+# --- _parse_observation_entries ---
+
+
+def test_parse_observation_entries_empty(vault_path):
+    """Parsing empty content returns empty structure."""
+    from memory import _parse_observation_entries
+
+    result = _parse_observation_entries("")
+    assert result['header'] == '# Observations'
+    assert result['summary_block'] is None
+    assert result['entries'] == []
+
+
+def test_parse_observation_entries_structured(vault_path):
+    """Parsing structured observations correctly extracts entries."""
+    from memory import _parse_observation_entries
+
+    content = (
+        "# Observations\n\n"
+        "## Summarized observations (through 2026-02-01)\n"
+        "User likes tests.\n\n"
+        "---\n[2026-02-10 14:30]\nFirst observation.\n\n"
+        "---\n[2026-02-12 09:00]\n[resolved: Explained]\nResolved observation.\n\n"
+        "---\n[2026-02-15 10:00]\nRecent observation.\n"
+    )
+    result = _parse_observation_entries(content)
+
+    assert "Summarized observations" in result['summary_block']
+    assert "User likes tests." in result['summary_block']
+    assert len(result['entries']) == 3
+    assert result['entries'][0]['timestamp'] == '2026-02-10 14:30'
+    assert result['entries'][0]['text'] == 'First observation.'
+    assert result['entries'][0]['resolved'] is None
+    assert result['entries'][1]['resolved'] == 'Explained'
+    assert result['entries'][2]['timestamp'] == '2026-02-15 10:00'
+
+
+# --- tool list updates ---
+
+
+def test_update_observations_in_chat_tools():
+    """update_observations should be in CHAT_TOOLS."""
+    from tools import CHAT_TOOLS
+
+    tool_names = [t["function"]["name"] for t in CHAT_TOOLS]
+    assert "update_observations" in tool_names
+
+
+def test_resolve_observation_in_chat_tools():
+    """resolve_observation should be in CHAT_TOOLS."""
+    from tools import CHAT_TOOLS
+
+    tool_names = [t["function"]["name"] for t in CHAT_TOOLS]
+    assert "resolve_observation" in tool_names
+
+
+def test_observations_not_in_update_soul_enum():
+    """update_soul tool should not have 'observations' in its enum."""
+    from tools import UPDATE_SOUL_TOOL
+
+    enum_values = UPDATE_SOUL_TOOL["function"]["parameters"]["properties"]["file"]["enum"]
+    assert "observations" not in enum_values
+
+
+def test_read_soul_uses_filtered_observations(vault_path):
+    """read_soul should use filtered observations (excluding resolved entries)."""
+    from memory import update_observations, resolve_observation, read_soul
+
+    update_observations("Active pattern.")
+    update_observations("Resolved pattern.")
+    resolve_observation("Resolved pattern", "No longer relevant")
+
+    soul_content = read_soul()
+    assert "Active pattern." in soul_content
+    assert "Resolved pattern." not in soul_content
+
+
+def test_soul_prompt_mentions_update_observations(vault_path):
+    """System prompt should mention update_observations."""
+    from prompts import build_system_prompt
+
+    prompt = build_system_prompt()
+    assert "update_observations" in prompt
+
+
+def test_consolidation_prompt_mentions_observations(vault_path):
+    """Consolidation prompt should mention automatic observation consolidation."""
+    from prompts import CONSOLIDATION_SYSTEM_PROMPT
+
+    assert "Observation consolidation" in CONSOLIDATION_SYSTEM_PROMPT or \
+           "observation consolidation" in CONSOLIDATION_SYSTEM_PROMPT

@@ -1,9 +1,10 @@
 # memory.py — Hierarchical memory (core / context / archive)
 import os
+import re
 import shutil
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 
@@ -24,6 +25,13 @@ TIMELINES_FOLDER = "timelines"
 ARCHIVE_FOLDER = "archive"
 ARCHIVE_CONVERSATIONS_FILE = "conversations.md"
 ARCHIVE_COMPLETED_GOALS_FILE = "completed-goals.md"
+
+# Observations append-only log configuration
+OBSERVATIONS_TOKEN_THRESHOLD = 800   # Trigger consolidation above this
+OBSERVATIONS_MAX_ENTRIES = 20        # Or above this many active entries
+OBSERVATIONS_KEEP_RECENT = 10       # Keep N most recent entries during consolidation
+OBSERVATIONS_CONTEXT_MAX_TOKENS = 400  # Max tokens when injected into prompt
+OBSERVATIONS_ARCHIVE_FILE = "observations_archive.md"
 
 # Default soul.md content — Memoria's initial self-concept
 DEFAULT_SOUL_CONTENT = """# soul.md
@@ -246,6 +254,13 @@ def read_soul() -> str:
 
     parts = []
     for file_key in ("soul", "observations", "opinions", "unresolved"):
+        if file_key == "observations":
+            # Use filtered reader: skips resolved, respects token budget
+            obs_content = read_observations_for_context()
+            if obs_content:
+                parts.append(obs_content)
+            continue
+
         filename = SOUL_FILES[file_key]
         p = soul_dir / filename
         if p.exists():
@@ -261,6 +276,408 @@ def read_soul() -> str:
     return "\n\n".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# Observations: append-only log with summarization
+# ---------------------------------------------------------------------------
+
+def _is_default_observations(content: str) -> bool:
+    """Check if content is the default observations seed or empty."""
+    stripped = (content or "").strip()
+    return not stripped or stripped == DEFAULT_OBSERVATIONS_CONTENT.strip()
+
+
+def _has_structured_entries(content: str) -> bool:
+    """Check if observations content has structured timestamped entries."""
+    return bool(re.search(r'^---\s*$', content, re.MULTILINE))
+
+
+def _extract_legacy_content(content: str) -> str:
+    """Extract content from a legacy observations file, stripping the header."""
+    lines = content.strip().split('\n')
+    start = 0
+    for i, line in enumerate(lines):
+        if line.strip().startswith('# '):
+            start = i + 1
+            continue
+        if line.strip() == '' and start == i:
+            start = i + 1
+            continue
+        break
+    return '\n'.join(lines[start:]).strip()
+
+
+def _parse_observation_entries(content: str) -> dict:
+    """Parse observations.md into header, summary block, and individual entries.
+
+    Returns:
+        {
+            'header': str,
+            'summary_block': str | None,
+            'entries': [{'timestamp': str|None, 'text': str, 'resolved': str|None, 'raw': str}],
+        }
+    """
+    result: dict = {
+        'header': '# Observations',
+        'summary_block': None,
+        'entries': [],
+    }
+
+    if not content or not content.strip():
+        return result
+
+    # Split on lines that are exactly '---' (with optional whitespace)
+    chunks = re.split(r'^---\s*$', content, flags=re.MULTILINE)
+
+    if not chunks:
+        return result
+
+    # First chunk is the header (title + optional summary block)
+    header = chunks[0].strip()
+    result['header'] = header
+
+    # Check for summary block in header
+    summary_match = re.search(
+        r'## Summarized observations \(through \d{4}-\d{2}-\d{2}\).*',
+        header,
+        re.DOTALL,
+    )
+    if summary_match:
+        result['summary_block'] = summary_match.group(0).strip()
+
+    # Parse entries from subsequent chunks
+    timestamp_re = re.compile(r'^\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\]')
+    resolved_re = re.compile(r'^\[resolved:\s*(.+?)\]', re.MULTILINE)
+
+    for chunk in chunks[1:]:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+
+        ts_match = timestamp_re.match(chunk)
+        timestamp = ts_match.group(1) if ts_match else None
+
+        res_match = resolved_re.search(chunk)
+        resolved = res_match.group(1) if res_match else None
+
+        # Extract clean observation text (skip timestamp and resolved lines)
+        lines = chunk.split('\n')
+        text_lines = []
+        for line in lines:
+            if timestamp_re.match(line):
+                continue
+            if resolved_re.match(line):
+                continue
+            text_lines.append(line)
+        text = '\n'.join(text_lines).strip()
+
+        result['entries'].append({
+            'timestamp': timestamp,
+            'text': text,
+            'resolved': resolved,
+            'raw': chunk,
+        })
+
+    return result
+
+
+def update_observations(observation: str) -> Dict:
+    """Append a timestamped observation entry. Never overwrites existing entries."""
+    root = _memory_root()
+    if not root:
+        return {"success": False, "error": "OBSIDIAN_PATH not set or invalid"}
+
+    if not observation or not str(observation).strip():
+        return {"success": False, "error": "observation is required"}
+
+    observation = str(observation).strip()
+
+    # Reject full rewrites
+    if observation.lstrip().startswith("# "):
+        return {
+            "success": False,
+            "error": "Pass only the observation text, not a full file rewrite. "
+                     "Each call appends a single timestamped entry.",
+        }
+    if re.search(r'---\s*\n\s*\[?\d{4}-', observation):
+        return {
+            "success": False,
+            "error": "Pass only a single observation. Each call appends one timestamped entry.",
+        }
+
+    soul_dir = root / SOUL_FOLDER
+    obs_path = soul_dir / SOUL_FILES["observations"]
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    new_entry = f"\n---\n[{timestamp}]\n{observation}\n"
+
+    try:
+        soul_dir.mkdir(parents=True, exist_ok=True)
+
+        existing = ""
+        if obs_path.exists():
+            existing = obs_path.read_text(encoding="utf-8")
+
+        if _is_default_observations(existing):
+            content = f"# Observations\n{new_entry}"
+        elif existing.strip() and not _has_structured_entries(existing):
+            # Legacy content: wrap as summary block, then append
+            legacy_text = _extract_legacy_content(existing)
+            today = datetime.now().strftime("%Y-%m-%d")
+            content = (
+                f"# Observations\n\n"
+                f"## Summarized observations (through {today})\n"
+                f"{legacy_text}\n{new_entry}"
+            )
+        else:
+            content = existing.rstrip() + new_entry
+
+        obs_path.write_text(content, encoding="utf-8")
+        entry_count = len(_parse_observation_entries(content)['entries'])
+        return {"success": True, "entries": entry_count, "tokens": estimate_tokens(content)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def resolve_observation(identifier: str, reason: str) -> Dict:
+    """Mark an observation as resolved by timestamp or partial text match."""
+    root = _memory_root()
+    if not root:
+        return {"success": False, "error": "OBSIDIAN_PATH not set or invalid"}
+
+    identifier = (identifier or "").strip()
+    reason = (reason or "").strip()
+    if not identifier:
+        return {"success": False, "error": "identifier is required (timestamp or partial text)"}
+    if not reason:
+        return {"success": False, "error": "reason is required"}
+
+    obs_path = root / SOUL_FOLDER / SOUL_FILES["observations"]
+    if not obs_path.exists():
+        return {"success": False, "error": "No observations file found"}
+
+    content = obs_path.read_text(encoding="utf-8")
+    parsed = _parse_observation_entries(content)
+
+    if not parsed['entries']:
+        return {"success": False, "error": "No observations to resolve"}
+
+    # Find matching entry (first unresolved match)
+    matched_idx = None
+    for i, entry in enumerate(parsed['entries']):
+        if entry['resolved']:
+            continue
+        if entry['timestamp'] and identifier in entry['timestamp']:
+            matched_idx = i
+            break
+        if identifier.lower() in entry['raw'].lower():
+            matched_idx = i
+            break
+
+    if matched_idx is None:
+        return {"success": False, "error": f"No unresolved observation matching '{identifier}'"}
+
+    # Insert [resolved: reason] after the timestamp line
+    entry = parsed['entries'][matched_idx]
+    old_raw = entry['raw']
+    lines = old_raw.split('\n')
+
+    insert_idx = 0
+    for j, line in enumerate(lines):
+        if re.match(r'^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\]', line):
+            insert_idx = j + 1
+            break
+
+    lines.insert(insert_idx, f"[resolved: {reason}]")
+    new_raw = '\n'.join(lines)
+
+    content = content.replace(old_raw, new_raw, 1)
+
+    try:
+        obs_path.write_text(content, encoding="utf-8")
+        return {"success": True, "resolved": entry['timestamp'] or identifier[:30]}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def read_observations_for_context() -> str:
+    """Load observations for system prompt injection.
+
+    - Includes the summarized block in full
+    - Includes the N most recent non-resolved entries that fit within the token budget
+    - Skips resolved entries entirely
+    - Goal: active context stays under ~400 tokens
+    """
+    root = _memory_root()
+    if not root:
+        return ""
+
+    obs_path = root / SOUL_FOLDER / SOUL_FILES["observations"]
+    if not obs_path.exists():
+        return ""
+
+    content = obs_path.read_text(encoding="utf-8").strip()
+    if not content or _is_default_observations(content):
+        return content
+
+    parsed = _parse_observation_entries(content)
+
+    # Build base: header + summary
+    base_parts = ["# Observations"]
+    if parsed['summary_block']:
+        base_parts.append("")
+        base_parts.append(parsed['summary_block'])
+    base = '\n'.join(base_parts)
+
+    # Filter out resolved entries
+    active_entries = [e for e in parsed['entries'] if not e['resolved']]
+
+    # Take at most KEEP_RECENT most recent active entries that fit budget
+    candidates = active_entries[-OBSERVATIONS_KEEP_RECENT:]
+    budget = OBSERVATIONS_CONTEXT_MAX_TOKENS - estimate_tokens(base)
+
+    selected: List[dict] = []
+    for entry in reversed(candidates):
+        entry_text = f"\n\n---\n{entry['raw']}"
+        entry_tokens = estimate_tokens(entry_text)
+        if budget - entry_tokens >= 0:
+            selected.insert(0, entry)
+            budget -= entry_tokens
+        else:
+            break
+
+    result = base
+    for entry in selected:
+        result += f"\n\n---\n{entry['raw']}"
+
+    return result
+
+
+def check_observations_need_consolidation() -> bool:
+    """Check if observations.md exceeds thresholds and needs consolidation."""
+    root = _memory_root()
+    if not root:
+        return False
+
+    obs_path = root / SOUL_FOLDER / SOUL_FILES["observations"]
+    if not obs_path.exists():
+        return False
+
+    try:
+        content = obs_path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return False
+
+    if not content or _is_default_observations(content):
+        return False
+
+    parsed = _parse_observation_entries(content)
+    active_entries = [e for e in parsed['entries'] if not e['resolved']]
+
+    if len(active_entries) > OBSERVATIONS_MAX_ENTRIES:
+        return True
+    if estimate_tokens(content) > OBSERVATIONS_TOKEN_THRESHOLD:
+        return True
+
+    return False
+
+
+def prepare_observations_for_consolidation() -> Optional[dict]:
+    """Extract old entries for summarization. Returns None if not needed.
+
+    Returns dict with:
+        'old_entries_text': entries to summarize (formatted for LLM)
+        'recent_entries': list of entry dicts to keep
+        'current_summary': existing summary block or None
+        'full_content': full file content for archiving
+    """
+    root = _memory_root()
+    if not root:
+        return None
+
+    obs_path = root / SOUL_FOLDER / SOUL_FILES["observations"]
+    if not obs_path.exists():
+        return None
+
+    full_content = obs_path.read_text(encoding="utf-8")
+    parsed = _parse_observation_entries(full_content)
+
+    if len(parsed['entries']) <= OBSERVATIONS_KEEP_RECENT:
+        return None
+
+    recent = parsed['entries'][-OBSERVATIONS_KEEP_RECENT:]
+    old = parsed['entries'][:-OBSERVATIONS_KEEP_RECENT]
+
+    if not old:
+        return None
+
+    old_text_parts = []
+    for entry in old:
+        old_text_parts.append(f"---\n{entry['raw']}")
+    old_entries_text = '\n\n'.join(old_text_parts)
+
+    return {
+        'old_entries_text': old_entries_text,
+        'recent_entries': recent,
+        'current_summary': parsed['summary_block'],
+        'full_content': full_content,
+    }
+
+
+def write_consolidated_observations(
+    summary: str, recent_entries: list, full_content_for_archive: str
+) -> Dict:
+    """Write consolidated observations and archive the original.
+
+    - Archives full pre-compression content to observations_archive.md
+    - Replaces observations.md with summary block + recent entries
+    """
+    root = _memory_root()
+    if not root:
+        return {"success": False, "error": "OBSIDIAN_PATH not set or invalid"}
+
+    soul_dir = root / SOUL_FOLDER
+    obs_path = soul_dir / SOUL_FILES["observations"]
+    archive_path = soul_dir / OBSERVATIONS_ARCHIVE_FILE
+
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Archive full pre-compression content
+        archive_header = f"\n\n---\n## Session: {today}\n\n"
+        if archive_path.exists():
+            existing_archive = archive_path.read_text(encoding="utf-8")
+        else:
+            existing_archive = (
+                "# Observations Archive\n\n"
+                "Full observation history, preserved during consolidation.\n"
+            )
+
+        archive_path.write_text(
+            existing_archive.rstrip() + archive_header + full_content_for_archive.strip() + "\n",
+            encoding="utf-8",
+        )
+
+        # Build new observations.md: summary block + recent entries
+        parts = [
+            f"# Observations\n\n"
+            f"## Summarized observations (through {today})\n"
+            f"{summary.strip()}"
+        ]
+        for entry in recent_entries:
+            parts.append(f"\n---\n{entry['raw']}")
+
+        new_content = ''.join(parts) + "\n"
+        obs_path.write_text(new_content, encoding="utf-8")
+
+        return {
+            "success": True,
+            "entries_kept": len(recent_entries),
+            "tokens": estimate_tokens(new_content),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def update_soul(content: str, file: str = "soul") -> Dict:
     """
     Update a file in the soul/ directory.
@@ -272,8 +689,18 @@ def update_soul(content: str, file: str = "soul") -> Dict:
         return {"success": False, "error": "OBSIDIAN_PATH not set or invalid"}
 
     file = (file or "soul").strip().lower()
+
+    # Observations are append-only — redirect to update_observations
+    if file == "observations":
+        return {
+            "success": False,
+            "error": "Use update_observations to add entries to the observations log. "
+                     "Each call appends a timestamped entry — do not overwrite the file.",
+        }
+
     if file not in VALID_SOUL_FILES:
-        return {"success": False, "error": f"Invalid soul file: {file}. Must be one of: {', '.join(sorted(VALID_SOUL_FILES))}"}
+        allowed = sorted(VALID_SOUL_FILES - {"observations"})
+        return {"success": False, "error": f"Invalid soul file: {file}. Must be one of: {', '.join(allowed)}"}
 
     if content is None:
         content = ""

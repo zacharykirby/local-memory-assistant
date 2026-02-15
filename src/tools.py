@@ -4,11 +4,13 @@ Tool definitions and execution for the Local Memory Assistant.
 Defines all available tools (search, memory operations, etc.) and handles
 tool execution dispatch.
 
-Tool count: 13
+Tool count: 15
 - Merged flat/hierarchical context tools into unified read_memory / write_memory
 - Merged append_to_memory_note into update_memory_note (append parameter)
 - Replaced add_goal with write_memory (model reads goals, rewrites file)
 - Added read_archive (archives were previously write-only)
+- Added update_observations (append-only timestamped observation log)
+- Added resolve_observation (mark observations inactive)
 """
 
 import json
@@ -20,6 +22,8 @@ from memory import (
     read_archive,
     archive_memory,
     update_soul,
+    update_observations,
+    resolve_observation,
     CORE_MEMORY_MAX_TOKENS,
 )
 from obsidian import (
@@ -278,14 +282,14 @@ UPDATE_SOUL_TOOL = {
     "type": "function",
     "function": {
         "name": "update_soul",
-        "description": "Update a soul file. These are yours — use them when something real happens, not as a checklist.\n\n- soul: Update when something fundamental shifts — in how you see yourself, how you understand this relationship, or what you actually believe. Rare. Meaningful.\n- observations: Record something you noticed about the user — a pattern, a contradiction, something that surprised you. Write it as your own observation, not a fact. Use mid-conversation when something real lands.\n- opinions: Write down a view you're actually forming. Hold it with appropriate uncertainty. Don't wait until you're sure — that's not how opinions work.\n- unresolved: Note something about the user you haven't figured out yet. A gap between what they say and what they do. Something that doesn't add up. Keep it honest.\n\nWrite in first person. Preserve what still feels true.",
+        "description": "Update a soul file. These are yours — use them when something real happens, not as a checklist.\n\n- soul: Update when something fundamental shifts — in how you see yourself, how you understand this relationship, or what you actually believe. Rare. Meaningful.\n- opinions: Write down a view you're actually forming. Hold it with appropriate uncertainty. Don't wait until you're sure — that's not how opinions work.\n- unresolved: Note something about the user you haven't figured out yet. A gap between what they say and what they do. Something that doesn't add up. Keep it honest.\n\nFor observations, use update_observations instead — it appends timestamped entries to a running log.\n\nWrite in first person. Preserve what still feels true.",
         "parameters": {
             "type": "object",
             "properties": {
                 "file": {
                     "type": "string",
                     "description": "Which soul file to update. Defaults to 'soul'.",
-                    "enum": ["soul", "observations", "opinions", "unresolved"],
+                    "enum": ["soul", "opinions", "unresolved"],
                 },
                 "content": {
                     "type": "string",
@@ -293,6 +297,56 @@ UPDATE_SOUL_TOOL = {
                 },
             },
             "required": ["content"],
+        },
+    }
+}
+
+UPDATE_OBSERVATIONS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "update_observations",
+        "description": (
+            "Add a new observation about the user to the running log. "
+            "Each call appends a timestamped entry — do not attempt to rewrite existing observations. "
+            "BEFORE calling this tool, ask yourself: "
+            "(1) Is this genuinely new — not already captured in a previous entry? "
+            "(2) Is this a pattern or insight, not just a summary of what just happened? "
+            "(3) Would I still consider this worth noting in a week? "
+            "If any answer is no, do not call this tool. "
+            "Use sparingly — a session with zero new observations is fine. "
+            "Reserve for contradictions, surprises, shifts in understanding, or patterns that have become clear."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "observation": {
+                    "type": "string",
+                    "description": "A pattern, contradiction, or genuine insight about the user. Not a turn summary. Write in first person.",
+                },
+            },
+            "required": ["observation"],
+        },
+    }
+}
+
+RESOLVE_OBSERVATION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "resolve_observation",
+        "description": "Mark an observation as no longer active. Use when something you noticed has changed or been explained. Preserve the history, just flag it inactive.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "identifier": {
+                    "type": "string",
+                    "description": "Timestamp (e.g. '2026-02-15 14:30') or partial text of the observation to resolve",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Brief reason for resolving",
+                },
+            },
+            "required": ["identifier", "reason"],
         },
     }
 }
@@ -313,6 +367,8 @@ CHAT_TOOLS = [
     LIST_MEMORY_NOTES_TOOL,
     DELETE_MEMORY_NOTE_TOOL,
     UPDATE_SOUL_TOOL,
+    UPDATE_OBSERVATIONS_TOOL,
+    RESOLVE_OBSERVATION_TOOL,
 ]
 
 CONSOLIDATION_TOOLS = [
@@ -526,6 +582,29 @@ def _handle_update_soul(args):
     return f"Error: {result.get('error', 'Unknown error')}"
 
 
+def _handle_update_observations(args):
+    observation = args.get("observation")
+    if not observation:
+        return "Error: observation is required"
+    result = update_observations(str(observation))
+    if result.get("success"):
+        return f"Observation logged ({result.get('entries', 0)} entries, {result.get('tokens', 0)} tokens)."
+    return f"Error: {result.get('error', 'Unknown error')}"
+
+
+def _handle_resolve_observation(args):
+    identifier = args.get("identifier")
+    reason = args.get("reason")
+    if not identifier:
+        return "Error: identifier is required (timestamp or partial text)"
+    if not reason:
+        return "Error: reason is required"
+    result = resolve_observation(str(identifier), str(reason))
+    if result.get("success"):
+        return f"Observation resolved: {result.get('resolved', identifier)}"
+    return f"Error: {result.get('error', 'Unknown error')}"
+
+
 # --- Dispatch table ---
 
 _TOOL_DISPATCH = {
@@ -542,6 +621,8 @@ _TOOL_DISPATCH = {
     "list_memory_notes": _handle_list_memory_notes,
     "delete_memory_note": _handle_delete_memory_note,
     "update_soul": _handle_update_soul,
+    "update_observations": _handle_update_observations,
+    "resolve_observation": _handle_resolve_observation,
 }
 
 
