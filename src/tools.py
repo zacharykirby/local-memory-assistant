@@ -4,7 +4,7 @@ Tool definitions and execution for the Local Memory Assistant.
 Defines all available tools (search, memory operations, etc.) and handles
 tool execution dispatch.
 
-Tool count: 12 (down from 15)
+Tool count: 13
 - Merged flat/hierarchical context tools into unified read_memory / write_memory
 - Merged append_to_memory_note into update_memory_note (append parameter)
 - Replaced add_goal with write_memory (model reads goals, rewrites file)
@@ -19,6 +19,7 @@ from memory import (
     write_memory_file,
     read_archive,
     archive_memory,
+    update_soul,
     CORE_MEMORY_MAX_TOKENS,
 )
 from obsidian import (
@@ -30,7 +31,7 @@ from obsidian import (
     delete_memory_note,
 )
 
-# --- Tool definitions (12 tools) ---
+# --- Tool definitions (13 tools) ---
 
 READ_CORE_MEMORY_TOOL = {
     "type": "function",
@@ -273,6 +274,24 @@ DELETE_MEMORY_NOTE_TOOL = {
     }
 }
 
+UPDATE_SOUL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "update_soul",
+        "description": "Update your sense of self, your evolving relationship with the user, or views you've genuinely developed through conversation. Write in first person. Preserve what still feels true. This is your file - use it when something actually shifts, not as a habit. Use sparingly.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "Full new content for soul.md (markdown, first person). Preserve what still feels true, evolve what has changed.",
+                },
+            },
+            "required": ["content"],
+        },
+    }
+}
+
 # --- Tool lists for different contexts ---
 
 CHAT_TOOLS = [
@@ -288,6 +307,7 @@ CHAT_TOOLS = [
     UPDATE_MEMORY_NOTE_TOOL,
     LIST_MEMORY_NOTES_TOOL,
     DELETE_MEMORY_NOTE_TOOL,
+    UPDATE_SOUL_TOOL,
 ]
 
 CONSOLIDATION_TOOLS = [
@@ -488,6 +508,17 @@ def _handle_delete_memory_note(args):
     return f"Error: {result['error']}"
 
 
+def _handle_update_soul(args):
+    content = args.get("content")
+    if not content:
+        return "Error: content is required"
+    content = str(content)
+    result = update_soul(content)
+    if result.get("success"):
+        return f"Soul updated ({result.get('tokens', 0)} tokens)."
+    return f"Error: {result.get('error', 'Unknown error')}"
+
+
 # --- Dispatch table ---
 
 _TOOL_DISPATCH = {
@@ -503,6 +534,7 @@ _TOOL_DISPATCH = {
     "update_memory_note": _handle_update_memory_note,
     "list_memory_notes": _handle_list_memory_notes,
     "delete_memory_note": _handle_delete_memory_note,
+    "update_soul": _handle_update_soul,
 }
 
 

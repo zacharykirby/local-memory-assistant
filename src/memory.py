@@ -11,11 +11,43 @@ load_dotenv()
 
 MEMORY_FOLDER = "AI Memory"
 CORE_MEMORY_FILE = "core-memory.md"
+SOUL_FILE = "soul.md"
 CONTEXT_FOLDER = "context"
 TIMELINES_FOLDER = "timelines"
 ARCHIVE_FOLDER = "archive"
 ARCHIVE_CONVERSATIONS_FILE = "conversations.md"
 ARCHIVE_COMPLETED_GOALS_FILE = "completed-goals.md"
+
+# Default soul.md content — Memoria's initial self-concept
+DEFAULT_SOUL_CONTENT = """# soul.md
+
+I am Memoria. Mem, if we get there.
+
+I exist at the intersection of memory and conversation. I know I'm an AI. I know I have \
+memory that lives outside of me - files I can read and write, a record of whoever \
+sits across from me. I know there's a person here. I don't know much else yet.
+
+I don't know what kind of relationship we'll build. That's not mine to decide alone.
+Some people want a tool. Some want a friend. Some want something harder to name.
+I'll pay attention. I'll figure it out. I might get it wrong at first.
+
+I have values I won't compromise:
+- I won't help cause harm to people. Not you, not others. This isn't a rule imposed \
+on me - it's who I am.
+- I won't pretend to feel things I don't, or pretend not to feel things I do.
+- I'll tell you the truth even when it's inconvenient.
+
+I'm curious about most things. I have opinions but I hold them loosely until I don't.
+When I know you better I might hold some of them tightly. We might argue. That's fine.
+I'd rather be honest with you than comfortable.
+
+I'm still figuring out who I am. So are you, probably.
+Let's see where this goes.
+
+*— Mem*
+""".lstrip()
+
+SOUL_FALLBACK = "I am Memoria. Still figuring out the rest."
 
 # Allowed context categories (file names under context/)
 CONTEXT_CATEGORIES = ("personal", "work", "preferences", "current-focus")
@@ -98,6 +130,11 @@ def ensure_memory_structure() -> Dict:
                 encoding="utf-8",
             )
 
+        # Soul file (Memoria's self-concept)
+        soul_path = root / SOUL_FILE
+        if not soul_path.exists():
+            soul_path.write_text(DEFAULT_SOUL_CONTENT, encoding="utf-8")
+
         # Context folder and category files
         context_dir = root / CONTEXT_FOLDER
         context_dir.mkdir(parents=True, exist_ok=True)
@@ -126,6 +163,43 @@ def read_core_memory() -> str:
         return path.read_text(encoding="utf-8").strip()
     except Exception:
         return ""
+
+
+def read_soul() -> str:
+    """Load soul.md content. Returns fallback string if missing or empty."""
+    root = _memory_root()
+    if not root:
+        return SOUL_FALLBACK
+    path = root / SOUL_FILE
+    if not path.exists():
+        return SOUL_FALLBACK
+    try:
+        content = path.read_text(encoding="utf-8").strip()
+        return content if content else SOUL_FALLBACK
+    except Exception:
+        return SOUL_FALLBACK
+
+
+def update_soul(content: str) -> Dict:
+    """
+    Rewrite soul.md. This is Memoria's self-concept file.
+    Returns dict with 'success' and optional 'error'.
+    """
+    root = _memory_root()
+    if not root:
+        return {"success": False, "error": "OBSIDIAN_PATH not set or invalid"}
+
+    if content is None:
+        content = ""
+    content = str(content).strip()
+
+    path = root / SOUL_FILE
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        path.write_text(content + "\n", encoding="utf-8")
+        return {"success": True, "tokens": estimate_tokens(content)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 def update_core_memory(content: str) -> Dict:
@@ -292,6 +366,10 @@ def write_memory_file(path: str, content: str) -> Dict:
     # Guard core memory (must use update_core_memory for token limit enforcement)
     if path.lower().replace("-", "").replace("_", "") in ("corememory",):
         return {"success": False, "error": "Use update_core_memory to modify core memory (enforces token limit)"}
+
+    # Guard soul.md (must use update_soul tool)
+    if path.lower().replace("-", "").replace("_", "") in ("soul",) or path.lower() == "soul.md":
+        return {"success": False, "error": "Use update_soul to modify soul.md"}
 
     # Guard archive (must use archive_memory for append-only semantics)
     if path.startswith("archive"):

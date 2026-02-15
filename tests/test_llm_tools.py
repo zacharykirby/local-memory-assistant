@@ -537,3 +537,135 @@ def test_read_archive_function(vault_path):
     # Read specific month
     out = read_archive("2026-02")
     assert "Test summary" in out
+
+
+# --- soul.md ---
+
+
+def test_ensure_memory_structure_creates_soul(vault_path):
+    """ensure_memory_structure should create soul.md with default content."""
+    soul_path = vault_path / "AI Memory" / "soul.md"
+    assert soul_path.exists()
+    content = soul_path.read_text(encoding="utf-8")
+    assert "I am Memoria" in content
+    assert "Mem, if we get there" in content
+
+
+def test_read_soul_returns_content(vault_path):
+    """read_soul should return the content of soul.md."""
+    from memory import read_soul
+
+    content = read_soul()
+    assert "I am Memoria" in content
+
+
+def test_read_soul_fallback_when_missing(vault_path):
+    """read_soul returns fallback when soul.md is missing."""
+    from memory import read_soul, SOUL_FALLBACK
+
+    soul_path = vault_path / "AI Memory" / "soul.md"
+    soul_path.unlink()
+    content = read_soul()
+    assert content == SOUL_FALLBACK
+
+
+def test_read_soul_fallback_when_empty(vault_path):
+    """read_soul returns fallback when soul.md is empty."""
+    from memory import read_soul, SOUL_FALLBACK
+
+    soul_path = vault_path / "AI Memory" / "soul.md"
+    soul_path.write_text("", encoding="utf-8")
+    content = read_soul()
+    assert content == SOUL_FALLBACK
+
+
+def test_update_soul_tool(execute_tool, vault_path):
+    """update_soul tool should write to soul.md."""
+    out = execute_tool("update_soul", {"content": "# soul.md\n\nI am evolving."})
+    assert "Soul updated" in out
+    soul_path = vault_path / "AI Memory" / "soul.md"
+    assert "I am evolving" in soul_path.read_text(encoding="utf-8")
+
+
+def test_update_soul_empty_content_rejected(execute_tool, vault_path):
+    """update_soul with empty content should return an error."""
+    out = execute_tool("update_soul", {"content": ""})
+    assert "Error" in out
+
+
+def test_write_memory_blocks_soul(execute_tool, vault_path):
+    """write_memory should reject attempts to write to soul.md."""
+    out = execute_tool("write_memory", {"path": "soul", "content": "Hijacked."})
+    assert "Error" in out and "update_soul" in out
+
+
+def test_write_memory_blocks_soul_md(execute_tool, vault_path):
+    """write_memory should reject 'soul.md' path variant."""
+    out = execute_tool("write_memory", {"path": "soul.md", "content": "Hijacked."})
+    assert "Error" in out and "update_soul" in out
+
+
+def test_create_memory_note_blocks_soul(execute_tool, vault_path):
+    """create_memory_note should reject 'soul' as a title."""
+    out = execute_tool("create_memory_note", {"title": "soul", "content": "Hijacked."})
+    assert "Error" in out and "protected" in out.lower()
+
+
+def test_update_memory_note_blocks_soul(execute_tool, vault_path):
+    """update_memory_note should reject 'soul.md' as filename."""
+    out = execute_tool("update_memory_note", {"filename": "soul.md", "new_content": "Hijacked."})
+    assert "Error" in out and "protected" in out.lower()
+
+
+def test_delete_memory_note_blocks_soul(execute_tool, vault_path):
+    """delete_memory_note should reject 'soul.md' as filename."""
+    out = execute_tool("delete_memory_note", {"filename": "soul.md"})
+    assert "Error" in out and "protected" in out.lower()
+
+
+def test_list_memory_notes_excludes_soul(execute_tool, vault_path):
+    """list_memory_notes should not show soul.md."""
+    out = execute_tool("list_memory_notes", {})
+    assert "soul" not in out.lower()
+
+
+def test_soul_not_in_memory_map(vault_path):
+    """soul.md should not appear in the memory map."""
+    from memory import build_memory_map
+
+    memory_map = build_memory_map()
+    assert "soul" not in memory_map.lower()
+
+
+def test_soul_in_system_prompt(vault_path):
+    """build_system_prompt should include soul.md content under 'Who I Am'."""
+    from prompts import build_system_prompt
+
+    prompt = build_system_prompt()
+    assert "## Who I Am" in prompt
+    assert "I am Memoria" in prompt
+
+
+def test_soul_in_consolidation_context(vault_path):
+    """build_consolidation_user_message should include soul.md content."""
+    from prompts import build_consolidation_user_message
+
+    msg = build_consolidation_user_message([], "some core memory")
+    assert "soul.md" in msg.lower()
+    assert "I am Memoria" in msg
+
+
+def test_update_soul_not_in_consolidation_tools():
+    """update_soul should not be in CONSOLIDATION_TOOLS."""
+    from tools import CONSOLIDATION_TOOLS
+
+    tool_names = [t["function"]["name"] for t in CONSOLIDATION_TOOLS]
+    assert "update_soul" not in tool_names
+
+
+def test_update_soul_in_chat_tools():
+    """update_soul should be in CHAT_TOOLS."""
+    from tools import CHAT_TOOLS
+
+    tool_names = [t["function"]["name"] for t in CHAT_TOOLS]
+    assert "update_soul" in tool_names

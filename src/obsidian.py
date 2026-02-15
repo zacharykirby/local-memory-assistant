@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
 
-from memory import MEMORY_FOLDER, _get_vault_path as _memory_get_vault_path
+from memory import MEMORY_FOLDER, SOUL_FILE, _get_vault_path as _memory_get_vault_path
 
 
 def _parse_frontmatter_tags(content: str) -> List[str]:
@@ -302,6 +302,14 @@ def _get_vault_path() -> tuple:
     return vault, None
 
 
+def _is_soul_path(filename: str) -> bool:
+    """Check if a filename resolves to soul.md (Memoria's protected self-concept file)."""
+    normalized = filename.strip().lower().replace("\\", "/")
+    # Match 'soul.md', 'soul', or paths ending in '/soul.md', '/soul'
+    stem = normalized.removesuffix(".md")
+    return stem == "soul" or stem.endswith("/soul")
+
+
 def create_memory_note(title: str, content: str, subfolder: str = None, topics: List[str] = None) -> Dict:
     """
     Create new markdown note in AI Memory/ folder.
@@ -318,6 +326,11 @@ def create_memory_note(title: str, content: str, subfolder: str = None, topics: 
     vault_path, error = _get_vault_path()
     if error:
         return {"success": False, "error": error}
+
+    # Guard soul.md — use update_soul tool instead
+    check_name = f"{subfolder}/{title}" if subfolder else title
+    if _is_soul_path(check_name):
+        return {"success": False, "error": "soul.md is protected — use update_soul to modify it"}
 
     # Ensure AI Memory folder exists
     success, error = _ensure_memory_folder(vault_path)
@@ -421,6 +434,10 @@ def update_memory_note(filename: str, new_content: str, topics: List[str] = None
     if error:
         return {"success": False, "error": error}
 
+    # Guard soul.md — use update_soul tool instead
+    if _is_soul_path(filename):
+        return {"success": False, "error": "soul.md is protected — use update_soul to modify it"}
+
     # Validate path
     is_valid, error_msg, target_path = _validate_memory_path(filename, vault_path)
     if not is_valid:
@@ -510,16 +527,20 @@ def list_memory_notes(subfolder: str = None) -> Dict:
     if not search_path.exists():
         return {"success": True, "notes": [], "message": f"Subfolder not found: {subfolder}"}
 
-    # List all markdown files
+    # List all markdown files (excluding soul.md — Memoria's private self-concept)
     notes = []
     try:
         for md_file in search_path.rglob("*.md"):
             try:
+                # Skip soul.md — not a user memory note
+                relative_path = md_file.relative_to(vault_path / MEMORY_FOLDER)
+                if str(relative_path) == SOUL_FILE:
+                    continue
+
                 with open(md_file, 'r', encoding='utf-8') as f:
                     content = f.read()
 
                 metadata = _parse_frontmatter_metadata(content)
-                relative_path = md_file.relative_to(vault_path / MEMORY_FOLDER)
 
                 notes.append({
                     "filepath": str(relative_path),
@@ -557,6 +578,10 @@ def delete_memory_note(filename: str) -> Dict:
     vault_path, error = _get_vault_path()
     if error:
         return {"success": False, "error": error}
+
+    # Guard soul.md — cannot be deleted via this tool
+    if _is_soul_path(filename):
+        return {"success": False, "error": "soul.md is protected and cannot be deleted"}
 
     # Validate path
     is_valid, error_msg, target_path = _validate_memory_path(filename, vault_path)

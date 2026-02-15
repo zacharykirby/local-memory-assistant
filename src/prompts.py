@@ -4,7 +4,7 @@ Prompt templates for the Local Memory Assistant.
 All system prompts, instruction templates, and prompt-building functions.
 """
 
-from memory import CORE_MEMORY_MAX_TOKENS, build_memory_map
+from memory import CORE_MEMORY_MAX_TOKENS, build_memory_map, read_soul
 
 # --- Main chat ---
 SYSTEM_PROMPT = """You are a personal assistant with persistent memory. You know this person - act like it.
@@ -449,6 +449,7 @@ CONSOLIDATION_SYSTEM_PROMPT = """The conversation is ending. Your only job is to
 3. Update core memory with new information if needed (keep under """ + str(CORE_MEMORY_MAX_TOKENS) + """ tokens). Remove or compress outdated items.
 4. Move detailed information to the appropriate context or timeline file using write_memory. Read relevant files first with read_memory to avoid overwriting.
 5. Optionally archive a short conversation summary using archive_memory.
+6. If this conversation meaningfully changed your understanding of the user or yourself, consider updating soul.md.
 
 Tools available: read_core_memory, update_core_memory, read_memory, write_memory, archive_memory, read_archive.
 Read before writing. When done, respond without further tool calls."""
@@ -480,11 +481,18 @@ def build_consolidation_user_message(conversation_messages: list, current_memory
             conv_summary.append(f"{role}: {content[:max_content_len]}{'...' if len(content) > max_content_len else ''}")
     conversation_snippet = "\n".join(conv_summary) if conv_summary else "(no messages)"
 
+    soul_content = read_soul()
+
     return f"""Please consolidate memory.
 
 Current core memory:
 ---
 {current_memory or '(empty)'}
+---
+
+Current soul.md:
+---
+{soul_content}
 ---
 
 Conversation context (recent messages):
@@ -509,11 +517,22 @@ def build_exploration_extraction_prompt(conversation: list) -> str:
 
 def build_system_prompt() -> str:
     """
-    Build the full system prompt with a live memory map injected.
+    Build the full system prompt with soul.md and a live memory map injected.
     Call this at conversation start, not at import time, so the map
     reflects the current vault state.
+
+    Order: behavioral instructions → soul → memory map
     """
+    parts = [SYSTEM_PROMPT]
+
+    # Inject soul.md — Memoria's self-concept
+    soul_content = read_soul()
+    if soul_content:
+        parts.append(f"\n\n## Who I Am\n\n{soul_content}")
+
+    # Inject memory map
     memory_map = build_memory_map()
     if memory_map:
-        return SYSTEM_PROMPT + "\n\n" + memory_map
-    return SYSTEM_PROMPT
+        parts.append(f"\n\n{memory_map}")
+
+    return "".join(parts)
