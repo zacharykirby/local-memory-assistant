@@ -95,13 +95,20 @@ def run_consolidation(messages: list) -> None:
         CONSOLIDATION_TOOLS,
         truncate_fn=truncate_messages,
         max_messages_in_context=CONSOLIDATION_MAX_MESSAGES,
-        max_iterations=10,
+        max_iterations=25,
         stream_first_response=False,
         show_tool_calls=True,
     )
 
-    if result["iterations"] >= 10:
+    if result["iterations"] >= 25:
         console.print(Text("  consolidation hit max iterations", style="dim #FF10F0"))
+    if not result["final_response"]:
+        console.print(
+            Text(
+                "  consolidation ended without final summary — memory files may be partially updated",
+                style="dim #FF10F0",
+            )
+        )
 
     # Consolidate observations after the main agentic loop
     _consolidate_observations()
