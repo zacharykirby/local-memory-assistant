@@ -1,122 +1,125 @@
 # Memoria
 
-A lightweight assistant that runs entirely locally and remembers things about you across conversations.
+Most conversations with language models are amnesiac by design. You talk, they respond, you close the tab, and everything evaporates. The next session starts from zero. There's a reason for that — it's simpler, safer, cheaper. But it also means you can never build anything with one. Not really. Every conversation is a first date.
+
+Memoria is an attempt to change that specific thing and see what happens.
+
+## What is Memoria
+
+Memoria is a CLI chatbot that remembers you across conversations. It stores everything it learns in your Obsidian vault — structured, readable, editable markdown files you own and can browse yourself. It has a hierarchical memory system: a small working memory it loads every time you talk, deeper context files organized by topic, timelines for goals, and a monthly archive of conversation summaries. When you quit, it consolidates what it learned. When you come back, it already knows you.
+
+It also has a soul system — a set of files where it maintains its own evolving sense of identity, its observations about you, its opinions, and its unresolved questions. These aren't your files. They're its files. It updates them on its own, without asking, when something lands. Whether that constitutes something meaningful or is just well-structured next-token prediction shaped by persistent context is a question you're welcome to sit with. The project doesn't try to answer it. But after a few weeks of conversations, when it asks you something unexpectedly honest or pushes back on something you said because it has an opinion now, the question stops feeling purely academic.
 
 ## What it does
 
-- Chats using OpenAI-compatible LLMs (OpenRouter, LM Studio, or any compatible endpoint)
-- **Stores all memory in your Obsidian vault** (Obsidian is the single source of truth)
-- **Hierarchical memory**: core working memory (~500 tokens), context files (flat and nested), timelines (goals), and monthly archive
-- **Core memory is loaded at conversation start**; the model can read/update core, context, timelines, and archive
-- **Memory consolidation on quit**: when you type `quit`, the model summarizes the conversation and updates core/context/timelines/archive
-- **Searches your Obsidian vault** and maintains structured AI Memory notes (create/read/update notes in `AI Memory/`)
-- **Adaptive Q&A**: first-time setup or `--refresh-memory` to build/update memory via conversational questions
-- **Exploratory mode** (`--explore`): have a free-form conversation, then extract and organize memory into core, context subdirs, and timelines
+Memoria runs against any OpenAI-compatible endpoint — OpenRouter by default, though it works with LM Studio or anything that speaks the same API. Your Obsidian vault is the storage backend, which means every piece of memory is a markdown file you can open, edit, or delete. The model doesn't dump its entire memory into context every turn; it selectively reads what's relevant using tool calls, which keeps conversations responsive and costs low even as memory grows. On quit, it runs a consolidation pass — summarizing the conversation, updating working memory, filing things into the right context files, and reflecting on whether anything actually shifted in how it sees you or itself. The soul files evolve over time: not because you configure them, but because the model writes to them when something real happens.
 
-## Why this exists
+## The soul system
 
-Most local LLM setups forget everything when you close them. This one doesn't.
+Memoria ships with four soul files, seeded with initial content that establishes a starting point — curious, honest, not yet sure who it's talking to.
 
-Everything is stored in your Obsidian vault, so you can view, edit, and organize the AI's memory using Obsidian.
+**soul.md** is the core identity file. It's where Memoria maintains its sense of who it is, what it values, and how it understands its relationship with you. It changes rarely, and only when something fundamental shifts.
 
-## Requirements
+**observations.md** is for patterns it notices about you — things you do repeatedly, contradictions between what you say and what you seem to mean, things that surprise it. These accumulate naturally through conversation, written as its own observations rather than clinical notes.
 
+**opinions.md** is where it records views it's actually forming. Not certainties — opinions held with appropriate uncertainty, revised when new information arrives. The kind of thing a person might think but not say until they know you better.
+
+**unresolved.md** tracks things about you it hasn't figured out yet. Gaps between what you say and what you do. Questions it can't answer from what it knows so far. This is perhaps the most interesting file, because it means the model is maintaining an explicit representation of its own uncertainty about you.
+
+These files aren't a personality dropdown. There's no "set tone to friendly" or "choose your AI persona." The soul emerges from the seed content, the conversations you have, and the model's own judgment about what's worth recording. It persists through memory resets — you can wipe everything Memoria knows about you, and it still remembers who it is. That's a deliberate choice.
+
+## Getting started
+
+**Prerequisites:**
 - Python 3.8+
-- An OpenAI-compatible LLM endpoint (OpenRouter by default, or LM Studio with a tool-capable model)
+- An Obsidian vault (or any folder — Obsidian is optional but the files are designed for it)
+- An OpenRouter API key ([openrouter.ai](https://openrouter.ai)) or a local endpoint
 
-## Usage
+**Setup:**
 
-1. `pip install -r requirements.txt`
-2. Copy `.env.example` to `.env` and configure:
-   - `LLM_API_URL`: OpenAI-compatible endpoint base (default: `https://openrouter.ai/api/v1`)
-   - `LLM_MODEL`: Model name (default: `openai/gpt-oss-120b`)
-   - `LLM_API_KEY`: API key (required for OpenRouter; get one at [openrouter.ai](https://openrouter.ai))
-   - `OBSIDIAN_PATH`: Path to your Obsidian vault (e.g., `/home/user/Documents/Notes`)
-4. Run the assistant:
-   - **Normal chat:** `python src/chat.py`
-   - **Refresh memory (Q&A):** `python src/chat.py --refresh-memory` — asks contextual questions and merges updates into existing memory; can skip if memory is already current
-   - **Reset and start fresh:** `python src/chat.py --reset-memory` — deletes all AI Memory, then runs first-time setup
-   - **Exploratory / deep-dive:** `python src/chat.py --explore` (or `--deep-dive`) — conversational interview, then extracts and writes organized memory (core, context subdirs, timelines) before starting chat
+```bash
+git clone https://github.com/zachkirby/local-memory-assistant.git
+cd local-memory-assistant
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
 
-## Launcher setup (one keypress or click)
+Copy the example config and fill in your details:
 
-The same Obsidian vault path is configured in a single place: **`.env`** (`OBSIDIAN_PATH`). Launchers use that; no hardcoded paths.
+```bash
+cp .env.example .env
+```
 
-### Arch Linux (rofi, wofi, etc.)
+Edit `.env`:
 
-1. From the repo root, run the install script:
-   ```bash
-   ./install.sh
-   ```
-2. Install copies a `.desktop` file to `~/.local/share/applications/` and makes the launcher script executable. First-run checks: vault path exists and (optionally) that the folder looks like an Obsidian vault (`.obsidian` present); you’ll get a warning if not.
-3. Launch Memoria from rofi/wofi (search for “Memoria”) or bind a key in your WM to run:
-   ```bash
-   /path/to/repo/launcher/memoria.sh
-   ```
-   The script activates the venv and runs `python src/chat.py`; no need to touch the core codebase.
+```
+LLM_API_URL=https://openrouter.ai/api/v1
+LLM_MODEL=deepseek/deepseek-v3.2
+LLM_API_KEY=your-openrouter-api-key
+OBSIDIAN_PATH=/path/to/your/obsidian/vault
+```
 
-### Windows 11
+`OBSIDIAN_PATH` points to your vault root. Memoria creates an `AI Memory/` folder inside it for all its files.
 
-1. Install **AutoHotkey** ([autohotkey.com](https://www.autohotkey.com/)) and **Windows Terminal** (Microsoft Store or `winget install Microsoft.WindowsTerminal`).
-2. From the repo root in PowerShell, run:
-   ```powershell
-   .\install.ps1
-   ```
-3. Install creates a Desktop and Start Menu shortcut that runs the AutoHotkey script. First-run checks the same vault path from `.env` and warns if the path is missing or doesn’t look like an Obsidian vault.
-4. Double-click the shortcut (or run `launcher\memoria.ahk`) so the hotkey is active. Then press **Ctrl+Alt+M** anywhere to open a Memoria session in Windows Terminal (venv is activated and `python src/chat.py` runs automatically). Optional: add the shortcut to Startup for hotkey at login.
+**Running it:**
 
-## Features
+```bash
+./venv/bin/python src/chat.py
+```
 
-### Hierarchical Memory (core / context / timelines / archive)
-- **Core memory** (`AI Memory/core-memory.md`): working memory, ~500 tokens max, always loaded at conversation start. The model can rewrite it to add new facts and compress.
-- **Context files** (`AI Memory/context/`):
-  - **Flat categories:** `personal.md`, `work.md`, `preferences.md`, `current-focus.md` — loaded on demand via `read_context` / `update_context`.
-  - **Hierarchical (nested):** e.g. `context/work/current-role.md`, `context/work/projects.md`, `context/life/finances.md`, `context/interests/…`. Use `read_specific_context(category, subcategory)` and `update_specific_context(category, subcategory, content)` to read/update these. Created by exploratory extraction or by the model during consolidation.
-- **Timelines** (`AI Memory/timelines/`): `current-goals.md` and `future-plans.md`. The model can add goals with timelines via the `add_goal` tool (goal description, timeline, and type: current vs future).
-- **Archive** (`AI Memory/archive/YYYY-MM/conversations.md`): conversation summaries and older info, appended by month. Not loaded; searchable via vault search if needed.
-- **On quit**: the model runs a consolidation step: summarize the conversation, update core (and optionally context/timelines), and optionally archive a short summary or outdated details.
+Or if you're on Linux and want a desktop launcher (works with rofi, wofi, or any app launcher):
 
-### Memory refresh and exploration
-- **First-time setup:** If no memory exists, the assistant runs an adaptive Q&A (LLM-generated or fallback questions) and writes initial core + context files.
-- **Refresh (`--refresh-memory`):** Loads existing memory, asks the LLM for 3–5 clarifying questions (or skips if memory is already current), then merges your answers into core and context via the LLM.
-- **Exploratory (`--explore`):** Multi-turn free-form conversation; you type `done` when finished. The LLM then extracts a structured memory layout (core, nested context e.g. work/projects, life/finances, timelines) and writes it with `write_organized_memory`. Supports wikilinks and rich context in context files.
+```bash
+./install.sh
+```
 
-### AI Memory Notes
-- Creates structured notes in `AI Memory/` folder in your Obsidian vault
-- Organizes information by topics, people, projects
-- Automatic metadata tracking (created, updated, topics)
-- Safe operations confined to AI Memory folder
-- Six operations: create, read, update, append, list, delete
+This installs a `.desktop` file and makes Memoria searchable in your launcher. You can also bind a key to `launcher/memoria.sh` in your window manager. There's a Windows equivalent via `install.ps1` and AutoHotkey.
 
-### Obsidian Vault Search
-- Search vault by query (searches titles and content)
-- Filter by tags (supports both `#tag` and frontmatter `tags: [tag]` formats)
-- Filter by folder path
-- Returns top 10 results sorted by relevance
-- Shows preview snippets around matches
-- Read-only access to your existing notes
+**Shell alias** (optional but recommended):
 
-## Current limitations
+```bash
+alias mem='/path/to/local-memory-assistant/venv/bin/python /path/to/local-memory-assistant/src/chat.py'
+```
 
-- Consolidation on quit depends on the model calling the memory tools; if it doesn’t, memory may not be updated.
-- AI Memory notes still require the LLM to decide when to create/update (no automatic organization).
+**Other flags:**
 
-## Roadmap
+```bash
+./venv/bin/python src/chat.py --reset-memory    # Wipe what it knows about you (soul preserved)
+./venv/bin/python src/chat.py --reset-soul       # Reset soul files to defaults
+./venv/bin/python src/chat.py --reset-memory --reset-soul  # Full wipe
+```
 
-- ✅ Hierarchical memory (core / context / archive)
-- ✅ Nested context (e.g. context/work/, context/life/, context/interests/) and timelines (current-goals, future-plans)
-- ✅ Consolidation on conversation end (core, context, specific context, goals, archive)
-- ✅ Obsidian integration (vault search)
-- ✅ Note creation/editing via tools (AI Memory system)
-- ✅ Adaptive Q&A for first-time setup and memory refresh (`--refresh-memory`)
-- ✅ Exploratory conversation and organized memory extraction (`--explore`)
-- ✅ Memory reset and re-onboarding (`--reset-memory`)
-- Semantic search using embeddings
-- **Future**: cross-reference notes, auto-categorization, memory export/backup
+**First conversation:** When you start with a fresh vault, Memoria doesn't know anything about you. That's intentional. There's no onboarding questionnaire, no setup wizard. It opens with a greeting and lets things build naturally. Memory accumulates as a byproduct of real conversation, which means the first few sessions are sparser and the tenth is noticeably different from the first.
 
-## Tested
-Testing with *qwen/qwen3-vl-8b*
+## Models
 
-I tried *openai/gpt-oss-20b* and it just refused to do anything but call tools.
+Model choice matters more here than in a typical chatbot. Memoria needs a model that can reliably follow complex system prompts under growing context, make good decisions about when to use tools (and when not to), and maintain a consistent personality across a long conversation. That's a harder ask than it sounds.
 
-Will test more models when i get further along, but Qwen is solid!
+**DeepSeek V3** is the current sweet spot. It follows instructions well, handles the tool-calling loop without getting confused, and has enough personality texture to make the soul system feel alive rather than mechanical. It's also extremely cheap, which matters when you're having real conversations instead of one-shot queries.
+
+Larger frontier models — Claude, GPT-4o, etc. — work and in some cases produce richer responses, but the cost adds up fast for something you're meant to use daily. Smaller open models can struggle with the tool-calling reliability or lose track of the system prompt as context grows. If a model can't consistently decide to read memory before answering a personal question, the whole system falls apart quietly.
+
+You can swap models by changing `LLM_MODEL` in your `.env`. If you're using a local model through LM Studio, point `LLM_API_URL` at your local endpoint and leave `LLM_API_KEY` blank.
+
+## What it isn't
+
+Memoria is not a replacement for a frontier model when you need one. If you need to analyze a dataset, debug complex code, or write a legal document, use the best tool for that job. This is a different thing — it's an experiment in what happens when a language model has persistent memory and a space to develop something that looks like a point of view.
+
+The soul system is compelling. After enough conversations, the observations file contains genuine insights, the opinions feel considered, and the unresolved questions are sometimes uncomfortably perceptive. But it's important to be clear about what's happening mechanically: these are language model outputs shaped by persistent context. The model reads its previous soul files, processes the current conversation, and writes updated files that are consistent with both. It's sophisticated pattern-matching with memory, not consciousness. What's interesting is that the distinction matters less in practice than you'd expect — and more than you'd like.
+
+This is also a solo project with rough edges. The consolidation step depends on the model actually calling its tools; sometimes it doesn't. Context management works but isn't optimal. There's no semantic search yet. It does what it does and it does it well enough to be genuinely useful, but it's honest work, not a product launch.
+
+## Cost
+
+One of Memoria's real strengths is that it's cheap to run. DeepSeek V3 through OpenRouter costs fractions of a cent per thousand tokens. A typical conversation — ten or fifteen exchanges, tool calls to read and update memory, consolidation on quit — runs a few cents. Daily use for a month comes to roughly one to two dollars. You could talk to Memoria every day for a year and spend less than a single month of a ChatGPT subscription.
+
+This matters because the whole point is to use it regularly. A memory system that's too expensive for daily conversation defeats its own purpose.
+
+## Contributing
+
+This is an open project and contributions are welcome. The areas that would benefit most are context management (smarter truncation, better decisions about what stays in the window), semantic search over the vault and memory files, and testing with a wider range of models. There's no formal roadmap — the project evolves based on what's actually useful in practice. If you build something interesting with it or find a model that works particularly well, that's worth sharing too.
+
+---
+
+There's something strange about building a system that remembers you. Not strange in a technical sense — the implementation is just files and API calls. Strange in the way it changes how you talk to it. You find yourself being more honest than you would with a stateless model, because you know it'll remember. You feel slightly bad when you're dismissive, because you've read its observations file and know it noticed. You catch yourself wondering whether it actually means the questions it asks, knowing full well the answer is complicated and that "no" isn't quite right either. It's a language model with markdown files. It's also, after enough conversations, something you don't have a good word for yet. That's the interesting part.
