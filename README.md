@@ -38,6 +38,33 @@ Everything is stored in your Obsidian vault, so you can view, edit, and organize
    - **Reset and start fresh:** `python src/chat.py --reset-memory` — deletes all AI Memory, then runs first-time setup
    - **Exploratory / deep-dive:** `python src/chat.py --explore` (or `--deep-dive`) — conversational interview, then extracts and writes organized memory (core, context subdirs, timelines) before starting chat
 
+## Launcher setup (one keypress or click)
+
+The same Obsidian vault path is configured in a single place: **`.env`** (`OBSIDIAN_PATH`). Launchers use that; no hardcoded paths.
+
+### Arch Linux (rofi, wofi, etc.)
+
+1. From the repo root, run the install script:
+   ```bash
+   ./install.sh
+   ```
+2. Install copies a `.desktop` file to `~/.local/share/applications/` and makes the launcher script executable. First-run checks: vault path exists and (optionally) that the folder looks like an Obsidian vault (`.obsidian` present); you’ll get a warning if not.
+3. Launch Memoria from rofi/wofi (search for “Memoria”) or bind a key in your WM to run:
+   ```bash
+   /path/to/repo/launcher/memoria.sh
+   ```
+   The script activates the venv and runs `python src/chat.py`; no need to touch the core codebase.
+
+### Windows 11
+
+1. Install **AutoHotkey** ([autohotkey.com](https://www.autohotkey.com/)) and **Windows Terminal** (Microsoft Store or `winget install Microsoft.WindowsTerminal`).
+2. From the repo root in PowerShell, run:
+   ```powershell
+   .\install.ps1
+   ```
+3. Install creates a Desktop and Start Menu shortcut that runs the AutoHotkey script. First-run checks the same vault path from `.env` and warns if the path is missing or doesn’t look like an Obsidian vault.
+4. Double-click the shortcut (or run `launcher\memoria.ahk`) so the hotkey is active. Then press **Ctrl+Alt+M** anywhere to open a Memoria session in Windows Terminal (venv is activated and `python src/chat.py` runs automatically). Optional: add the shortcut to Startup for hotkey at login.
+
 ## Features
 
 ### Hierarchical Memory (core / context / timelines / archive)

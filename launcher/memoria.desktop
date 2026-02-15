@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Memoria
+Comment=Local AI memory assistant (Obsidian-backed)
+Exec=@REPO_PATH@/launcher/memoria.sh
+Icon=utilities-terminal
+Terminal=true
+Categories=Utility;TextEditor;
+StartupNotify=true
+# REPO_PATH is replaced by install.sh with the actual repo path
