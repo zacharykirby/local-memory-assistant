@@ -38,7 +38,7 @@ These files aren't a personality dropdown. There's no "set tone to friendly" or 
 **Setup:**
 
 ```bash
-git clone https://github.com/zachkirby/local-memory-assistant.git
+git clone https://github.com/zacharykirby/local-memory-assistant.git
 cd local-memory-assistant
 python -m venv venv
 source venv/bin/activate
