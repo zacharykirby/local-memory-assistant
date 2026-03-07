@@ -143,6 +143,8 @@ def call_llm(messages, tools=None, stream=False, live_display=None, max_tokens=N
                 except json.JSONDecodeError:
                     continue
 
+                if not chunk.get("choices"):
+                    continue
                 delta = chunk["choices"][0].get("delta", {})
 
                 # Stream content tokens
